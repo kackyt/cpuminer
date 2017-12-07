@@ -38,9 +38,7 @@
 #endif
 
 #include <emmintrin.h>
-#ifdef __XOP__
 #include <x86intrin.h>
-#endif
 
 #include <errno.h>
 #include <stdint.h>
@@ -71,9 +69,9 @@
 #else
 #define ARX(out, in1, in2, s) \
 	{ \
-		__m128i T = _mm_add_epi32(in1, in2); \
-		out = _mm_xor_si128(out, _mm_slli_epi32(T, s)); \
-		out = _mm_xor_si128(out, _mm_srli_epi32(T, 32-s)); \
+		__m128i T = _mm256_add_epi32(in1, in2); \
+		out = _mm256_xor_si256(out, _mm_slli_epi32(T, s)); \
+		out = _mm256_xor_si256(out, _mm_srli_epi32(T, 32-s)); \
 	}
 #endif
 
@@ -107,39 +105,33 @@
 	{ \
 		maybe_decl Y0 = X0; \
 		maybe_decl Y1 = X1; \
-		maybe_decl Y2 = X2; \
-		maybe_decl Y3 = X3; \
 		SALSA20_2ROUNDS \
 		SALSA20_2ROUNDS \
 		SALSA20_2ROUNDS \
 		SALSA20_2ROUNDS \
-		(out)[0] = X0 = _mm_add_epi32(X0, Y0); \
-		(out)[1] = X1 = _mm_add_epi32(X1, Y1); \
-		(out)[2] = X2 = _mm_add_epi32(X2, Y2); \
-		(out)[3] = X3 = _mm_add_epi32(X3, Y3); \
+		(out)[0] = X0 = _mm256_add_epi32(X0, Y0); \
+		(out)[1] = X1 = _mm256_add_epi32(X1, Y1); \
 	}
 #define SALSA20_8(out) \
-	SALSA20_8_BASE(__m128i, out)
+	SALSA20_8_BASE(__m256i, out)
 
 /**
  * Apply the salsa20/8 core to the block provided in (X0 ... X3) ^ (Z0 ... Z3).
  */
-#define SALSA20_8_XOR_ANY(maybe_decl, Z0, Z1, Z2, Z3, out) \
-	X0 = _mm_xor_si128(X0, Z0); \
-	X1 = _mm_xor_si128(X1, Z1); \
-	X2 = _mm_xor_si128(X2, Z2); \
-	X3 = _mm_xor_si128(X3, Z3); \
+#define SALSA20_8_XOR_ANY(maybe_decl, Z0, Z1, out) \
+	X0 = _mm256_xor_si256(X0, Z0); \
+	X1 = _mm256_xor_si256(X1, Z1); \
 	SALSA20_8_BASE(maybe_decl, out)
 
 #define SALSA20_8_XOR_MEM(in, out) \
-	SALSA20_8_XOR_ANY(__m128i, (in)[0], (in)[1], (in)[2], (in)[3], out)
+	SALSA20_8_XOR_ANY(__m256i, (in)[0], (in)[1], out)
 
 #define SALSA20_8_XOR_REG(out) \
-	SALSA20_8_XOR_ANY(/* empty */, Y0, Y1, Y2, Y3, out)
+	SALSA20_8_XOR_ANY(/* empty */, Y0, Y1, out)
 
 typedef union {
 	uint32_t w[16];
-	__m128i q[4];
+	__m256i q[2];
 } salsa20_blk_t;
 
 /**
@@ -151,7 +143,7 @@ static inline void
 blockmix_salsa8(const salsa20_blk_t *restrict Bin,
     salsa20_blk_t *restrict Bout, size_t r)
 {
-	__m128i X0, X1, X2, X3;
+	__m256i X0, X1;
 	size_t i;
 
 	r--;
@@ -169,8 +161,6 @@ blockmix_salsa8(const salsa20_blk_t *restrict Bin,
 	/* 1: X <-- B_{2r - 1} */
 	X0 = Bin[r * 2 + 1].q[0];
 	X1 = Bin[r * 2 + 1].q[1];
-	X2 = Bin[r * 2 + 1].q[2];
-	X3 = Bin[r * 2 + 1].q[3];
 
 	/* 3: X <-- H(X \xor B_i) */
 	/* 4: Y_i <-- X */
@@ -290,30 +280,25 @@ blockmix_salsa8(const salsa20_blk_t *restrict Bin,
 
 #define PWXFORM_ROUND \
 	PWXFORM_SIMD(X0, x0, s00, s01) \
-	PWXFORM_SIMD(X1, x1, s10, s11) \
-	PWXFORM_SIMD(X2, x2, s20, s21) \
-	PWXFORM_SIMD(X3, x3, s30, s31)
+	PWXFORM_SIMD(X1, x1, s10, s11)
 
 #define PWXFORM \
 	{ \
 		PWXFORM_X_T x0, x1, x2, x3; \
-		__m128i s00, s01, s10, s11, s20, s21, s30, s31; \
+		__m256i s00, s01, s10, s11; \
 		PWXFORM_ROUND PWXFORM_ROUND \
 		PWXFORM_ROUND PWXFORM_ROUND \
 		PWXFORM_ROUND PWXFORM_ROUND \
 	}
 
 #define XOR4(in) \
-	X0 = _mm_xor_si128(X0, (in)[0]); \
-	X1 = _mm_xor_si128(X1, (in)[1]); \
-	X2 = _mm_xor_si128(X2, (in)[2]); \
-	X3 = _mm_xor_si128(X3, (in)[3]);
+	X0 = _mm256_xor_si256(X0, (in)[0]); \
+	X1 = _mm256_xor_si256(X1, (in)[1]);
 
 #define OUT(out) \
 	(out)[0] = X0; \
-	(out)[1] = X1; \
-	(out)[2] = X2; \
-	(out)[3] = X3;
+	(out)[1] = X1;
+
 
 /**
  * blockmix_pwxform(Bin, Bout, r, S):
@@ -325,7 +310,7 @@ blockmix(const salsa20_blk_t *restrict Bin, salsa20_blk_t *restrict Bout,
     size_t r, const __m128i *restrict S)
 {
 	const uint8_t * S0, * S1;
-	__m128i X0, X1, X2, X3;
+	__m256i X0, X1;
 	size_t i;
 
 	if (!S) {
@@ -350,8 +335,6 @@ blockmix(const salsa20_blk_t *restrict Bin, salsa20_blk_t *restrict Bout,
 	/* X <-- B_{r1 - 1} */
 	X0 = Bin[r].q[0];
 	X1 = Bin[r].q[1];
-	X2 = Bin[r].q[2];
-	X3 = Bin[r].q[3];
 
 	/* for i = 0 to r1 - 1 do */
 	for (i = 0; i < r; i++) {
@@ -371,17 +354,15 @@ blockmix(const salsa20_blk_t *restrict Bin, salsa20_blk_t *restrict Bout,
 }
 
 #define XOR4_2(in1, in2) \
-	X0 = _mm_xor_si128((in1)[0], (in2)[0]); \
-	X1 = _mm_xor_si128((in1)[1], (in2)[1]); \
-	X2 = _mm_xor_si128((in1)[2], (in2)[2]); \
-	X3 = _mm_xor_si128((in1)[3], (in2)[3]);
+	X0 = _mm256_xor_si256((in1)[0], (in2)[0]); \
+	X1 = _mm256_xor_si256((in1)[1], (in2)[1]);
 
 static inline uint32_t
 blockmix_salsa8_xor(const salsa20_blk_t *restrict Bin1,
     const salsa20_blk_t *restrict Bin2, salsa20_blk_t *restrict Bout,
     size_t r, int Bin2_in_ROM)
 {
-	__m128i X0, X1, X2, X3;
+	__m256i X0, X1;
 	size_t i;
 
 	r--;
@@ -455,7 +436,7 @@ blockmix_xor(const salsa20_blk_t *restrict Bin1,
     size_t r, int Bin2_in_ROM, const __m128i *restrict S)
 {
 	const uint8_t * S0, * S1;
-	__m128i X0, X1, X2, X3;
+	__m256i X0, X1;
 	size_t i;
 
 	if (!S)
@@ -513,17 +494,15 @@ blockmix_xor(const salsa20_blk_t *restrict Bin1,
 
 #undef XOR4
 #define XOR4(in, out) \
-	(out)[0] = Y0 = _mm_xor_si128((in)[0], (out)[0]); \
-	(out)[1] = Y1 = _mm_xor_si128((in)[1], (out)[1]); \
-	(out)[2] = Y2 = _mm_xor_si128((in)[2], (out)[2]); \
-	(out)[3] = Y3 = _mm_xor_si128((in)[3], (out)[3]);
+	(out)[0] = Y0 = _mm256_xor_si256((in)[0], (out)[0]); \
+	(out)[1] = Y1 = _mm256_xor_si256((in)[1], (out)[1]);
 
 static inline uint32_t
 blockmix_salsa8_xor_save(const salsa20_blk_t *restrict Bin1,
     salsa20_blk_t *restrict Bin2, salsa20_blk_t *restrict Bout,
     size_t r)
 {
-	__m128i X0, X1, X2, X3, Y0, Y1, Y2, Y3;
+	__m256i X0, X1, Y0, Y1;
 	size_t i;
 
 	r--;
@@ -578,10 +557,8 @@ blockmix_salsa8_xor_save(const salsa20_blk_t *restrict Bin1,
 }
 
 #define XOR4_Y \
-	X0 = _mm_xor_si128(X0, Y0); \
-	X1 = _mm_xor_si128(X1, Y1); \
-	X2 = _mm_xor_si128(X2, Y2); \
-	X3 = _mm_xor_si128(X3, Y3);
+	X0 = _mm256_xor_si256(X0, Y0); \
+	X1 = _mm256_xor_si256(X1, Y1);
 
 static uint32_t
 blockmix_xor_save(const salsa20_blk_t *restrict Bin1,
@@ -589,7 +566,7 @@ blockmix_xor_save(const salsa20_blk_t *restrict Bin1,
     size_t r, const __m128i *restrict S)
 {
 	const uint8_t * S0, * S1;
-	__m128i X0, X1, X2, X3, Y0, Y1, Y2, Y3;
+	__m256i X0, X1, Y0, Y1;
 	size_t i;
 
 	if (!S)
