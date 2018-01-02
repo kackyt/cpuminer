@@ -27,19 +27,19 @@
 #define YESCRYPT_T 0
 #define YESCRYPT_FLAGS (YESCRYPT_RW | YESCRYPT_PWXFORM)
 
-static int yescrypt_bitzeny(const uint8_t *passwd, size_t passwdlen,
-                            const uint8_t *salt, size_t saltlen,
-                            uint8_t *buf, size_t buflen)
+template <size_t passwdlen, size_t saltlen, int buflen>
+static int yescrypt_bitzeny(const uint8_t *passwd,
+                            const uint8_t *salt,
+                            uint8_t *buf)
 {
-    static __thread int initialized = 0;
-    static __thread yescrypt_shared_t shared;
-    static __thread yescrypt_local_t local;
+    static thread_local int initialized = 0;
+    static thread_local yescrypt_shared_t shared;
+    static thread_local yescrypt_local_t local;
     int retval;
     if (!initialized) {
         /* "shared" could in fact be shared, but it's simpler to keep it private
          * along with "local".  It's dummy and tiny anyway. */
-        if (yescrypt_init_shared(&shared, NULL, 0,
-                                 0, 0, 0, YESCRYPT_SHARED_DEFAULTS, 0, NULL, 0))
+      if (yescrypt_init_shared<0, YESCRYPT_SHARED_DEFAULTS, 0>(&shared))
             return -1;
         if (yescrypt_init_local(&local)) {
             yescrypt_free_shared(&shared);
@@ -47,9 +47,7 @@ static int yescrypt_bitzeny(const uint8_t *passwd, size_t passwdlen,
         }
         initialized = 1;
     }
-    retval = yescrypt_kdf(&shared, &local, passwd, passwdlen, salt, saltlen,
-                          YESCRYPT_N, YESCRYPT_R, YESCRYPT_P, YESCRYPT_T,
-                          YESCRYPT_FLAGS, buf, buflen);
+    retval = yescrypt_kdf<passwdlen, saltlen, YESCRYPT_N, YESCRYPT_R, YESCRYPT_P, YESCRYPT_T, YESCRYPT_FLAGS, buflen>(&shared, &local, passwd, salt, buf);
 #if 0
     if (yescrypt_free_local(&local)) {
         yescrypt_free_shared(&shared);
@@ -68,9 +66,9 @@ static int yescrypt_bitzeny(const uint8_t *passwd, size_t passwdlen,
 
 static void yescrypt_hash(const char *input, char *output)
 {
-    yescrypt_bitzeny((const uint8_t *) input, 80,
-                     (const uint8_t *) input, 80,
-                     (uint8_t *) output, 32);
+  yescrypt_bitzeny<80, 80, 32>((const uint8_t *) input,
+                     (const uint8_t *) input,
+                     (uint8_t *) output);
 }
 
 #include <stdbool.h>

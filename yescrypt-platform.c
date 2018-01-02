@@ -108,12 +108,9 @@ free_region(yescrypt_region_t * region)
 	return 0;
 }
 
+template <uint32_t p, int flags, uint32_t mask>
 static int
-yescrypt_init_shared(yescrypt_shared_t * shared,
-    const uint8_t * param, size_t paramlen,
-    uint64_t N, uint32_t r, uint32_t p,
-    yescrypt_init_shared_flags_t flags, uint32_t mask,
-    uint8_t * buf, size_t buflen)
+yescrypt_init_shared(yescrypt_shared_t * shared)
 {
 	yescrypt_shared1_t * shared1 = &shared->shared1;
 	yescrypt_shared_t dummy, half1, half2;
@@ -126,39 +123,28 @@ yescrypt_init_shared(yescrypt_shared_t * shared,
 		init_region(shared1);
 	}
 	shared->mask1 = 1;
-	if (!param && !paramlen && !N && !r && !p && !buf && !buflen)
-		return 0;
 
 	init_region(&dummy.shared1);
 	dummy.mask1 = 1;
-	if (yescrypt_kdf(&dummy, shared1,
-	    param, paramlen, NULL, 0, N, r, p, 0,
-	    YESCRYPT_RW | YESCRYPT_PARALLEL_SMIX | __YESCRYPT_INIT_SHARED_1,
-	    salt, sizeof(salt)))
+	if (yescrypt_kdf<0, 0, 0, 0, p, 0, YESCRYPT_RW | YESCRYPT_PARALLEL_SMIX | __YESCRYPT_INIT_SHARED_1, sizeof(salt)>
+        (&dummy, shared1, NULL, NULL, salt))
 		goto out;
 
 	half1 = half2 = *shared;
 	half1.shared1.aligned_size /= 2;
 	half2.shared1.aligned += half1.shared1.aligned_size;
 	half2.shared1.aligned_size = half1.shared1.aligned_size;
-	N /= 2;
 
-	if (p > 1 && yescrypt_kdf(&half1, &half2.shared1,
-	    param, paramlen, salt, sizeof(salt), N, r, p, 0,
-	    YESCRYPT_RW | YESCRYPT_PARALLEL_SMIX | __YESCRYPT_INIT_SHARED_2,
-	    salt, sizeof(salt)))
+	if (p > 1 && yescrypt_kdf<0, sizeof(salt), 0, 0, p, 0, YESCRYPT_RW | YESCRYPT_PARALLEL_SMIX | __YESCRYPT_INIT_SHARED_2, sizeof(salt)>
+        (&half1, &half2.shared1, NULL, salt, salt))
 		goto out;
 
-	if (yescrypt_kdf(&half2, &half1.shared1,
-	    param, paramlen, salt, sizeof(salt), N, r, p, 0,
-	    YESCRYPT_RW | YESCRYPT_PARALLEL_SMIX | __YESCRYPT_INIT_SHARED_1,
-	    salt, sizeof(salt)))
+	if (yescrypt_kdf<0, sizeof(salt), 0, 0, p, 0, YESCRYPT_RW | YESCRYPT_PARALLEL_SMIX | __YESCRYPT_INIT_SHARED_1, sizeof(salt)>
+        (&half2, &half1.shared1, NULL, salt, salt))
 		goto out;
 
-	if (yescrypt_kdf(&half1, &half2.shared1,
-	    param, paramlen, salt, sizeof(salt), N, r, p, 0,
-	    YESCRYPT_RW | YESCRYPT_PARALLEL_SMIX | __YESCRYPT_INIT_SHARED_1,
-	    buf, buflen))
+	if (yescrypt_kdf<0, sizeof(salt), 0, 0, p, 0, YESCRYPT_RW | YESCRYPT_PARALLEL_SMIX | __YESCRYPT_INIT_SHARED_1, 0>
+        (&half1, &half2.shared1, NULL, salt, NULL))
 		goto out;
 
 	shared->mask1 = mask;
