@@ -39,7 +39,7 @@
  * they might differ from each other in a future version.
  */
 typedef struct {
-	void * base, * aligned;
+	uint8_t * base, * aligned;
 	size_t base_size, aligned_size;
 } yescrypt_region_t;
 
@@ -268,7 +268,7 @@ static int yescrypt_kdf(const yescrypt_shared_t * __shared,
     const uint8_t * __passwd, size_t __passwdlen,
     const uint8_t * __salt, size_t __saltlen,
     uint64_t __N, uint32_t __r, uint32_t __p, uint32_t __t,
-    yescrypt_flags_t __flags,
+    int __flags,
     uint8_t * __buf, size_t __buflen);
 
 #endif /* !_YESCRYPT_H_ */

@@ -79,6 +79,8 @@ struct work_restart {
 	char			padding[128 - sizeof(unsigned long)];
 };
 
+extern "C" {
+
 extern struct work_restart *work_restart;
 extern bool fulltest(const uint32_t *hash, const uint32_t *target);
 
@@ -111,5 +113,6 @@ int scanhash_yescrypt(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
 	*hashes_done = n - first_nonce + 1;
 	pdata[19] = n;
 	return 0;
+}
 }
 

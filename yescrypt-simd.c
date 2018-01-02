@@ -670,11 +670,12 @@ integerify(const salsa20_blk_t * B, size_t r)
  * bytes as well saves cache lines, but might result in cache bank conflicts).
  */
 static void
-smix1(uint8_t * B, size_t r, uint32_t N, yescrypt_flags_t flags,
+smix1(uint8_t * B, size_t r, uint32_t N, int flags,
     salsa20_blk_t * V, uint32_t NROM, const yescrypt_shared_t * shared,
-    salsa20_blk_t * XY, void * S)
+    salsa20_blk_t * XY, void * _S)
 {
-	const salsa20_blk_t * VROM = shared->shared1.aligned;
+    const __m128i * S = (const __m128i*)_S;
+	const salsa20_blk_t * VROM = (const salsa20_blk_t *)shared->shared1.aligned;
 	uint32_t VROM_mask = shared->mask1;
 	size_t s = 2 * r;
 	salsa20_blk_t * X = V, * Y;
@@ -889,10 +890,11 @@ smix1(uint8_t * B, size_t r, uint32_t N, yescrypt_flags_t flags,
  */
 static void
 smix2(uint8_t * B, size_t r, uint32_t N, uint64_t Nloop,
-    yescrypt_flags_t flags, salsa20_blk_t * V, uint32_t NROM,
-    const yescrypt_shared_t * shared, salsa20_blk_t * XY, void * S)
+    int flags, salsa20_blk_t * V, uint32_t NROM,
+    const yescrypt_shared_t * shared, salsa20_blk_t * XY, void * _S)
 {
-	const salsa20_blk_t * VROM = shared->shared1.aligned;
+    const __m128i * S = (const __m128i *)_S;
+	const salsa20_blk_t * VROM = (const salsa20_blk_t *)shared->shared1.aligned;
 	uint32_t VROM_mask = shared->mask1;
 	size_t s = 2 * r;
 	salsa20_blk_t * X = XY, * Y = &XY[s];
@@ -1046,7 +1048,7 @@ p2floor(uint64_t x)
  */
 static void
 smix(uint8_t * B, size_t r, uint32_t N, uint32_t p, uint32_t t,
-    yescrypt_flags_t flags,
+    int flags,
     salsa20_blk_t * V, uint32_t NROM, const yescrypt_shared_t * shared,
     salsa20_blk_t * XY, void * S)
 {
@@ -1095,7 +1097,7 @@ smix(uint8_t * B, size_t r, uint32_t N, uint32_t p, uint32_t t,
 		salsa20_blk_t * XYp = XY;
 #endif
 		uint32_t Np = (i < p - 1) ? Nchunk : (N - Vchunk);
-		void * Sp = S ? ((uint8_t *)S + i * S_SIZE_ALL) : S;
+		salsa20_blk_t * Sp = (salsa20_blk_t *)(S ? ((uint8_t *)S + i * S_SIZE_ALL) : S);
 		if (Sp)
 			smix1(Bp, 1, S_SIZE_ALL / 128,
 			    flags & ~YESCRYPT_PWXFORM,
@@ -1148,7 +1150,7 @@ static int
 yescrypt_kdf(const yescrypt_shared_t * shared, yescrypt_local_t * local,
     const uint8_t * passwd, size_t passwdlen,
     const uint8_t * salt, size_t saltlen,
-    uint64_t N, uint32_t r, uint32_t p, uint32_t t, yescrypt_flags_t flags,
+    uint64_t N, uint32_t r, uint32_t p, uint32_t t, int flags,
     uint8_t * buf, size_t buflen)
 {
 	yescrypt_region_t tmp;

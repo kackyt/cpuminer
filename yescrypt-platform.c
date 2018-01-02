@@ -74,7 +74,7 @@ alloc_region(yescrypt_region_t * region, size_t size)
 	base = aligned = NULL;
 	if (size + 63 < size) {
 		errno = ENOMEM;
-	} else if ((base = malloc(size + 63)) != NULL) {
+	} else if ((base = (uint8_t *)malloc(size + 63)) != NULL) {
 		aligned = base + 63;
 		aligned -= (uintptr_t)aligned & 63;
 	}
