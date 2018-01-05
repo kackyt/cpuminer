@@ -669,12 +669,14 @@ integerify(const salsa20_blk_t * B, size_t r)
  * arrays B and XY to a multiple of at least 16 bytes (aligning them to 64
  * bytes as well saves cache lines, but might result in cache bank conflicts).
  */
+template <size_t r, int flags>
 static void
-smix1(uint8_t * B, size_t r, uint32_t N, yescrypt_flags_t flags,
+    smix1(uint8_t * B, uint32_t N,
     salsa20_blk_t * V, uint32_t NROM, const yescrypt_shared_t * shared,
-    salsa20_blk_t * XY, void * S)
+    salsa20_blk_t * XY, void * _S)
 {
-	const salsa20_blk_t * VROM = shared->shared1.aligned;
+    const __m128i * S = (const __m128i*)_S;
+	const salsa20_blk_t * VROM = (const salsa20_blk_t *)shared->shared1.aligned;
 	uint32_t VROM_mask = shared->mask1;
 	size_t s = 2 * r;
 	salsa20_blk_t * X = V, * Y;
@@ -887,12 +889,13 @@ smix1(uint8_t * B, size_t r, uint32_t N, yescrypt_flags_t flags,
  * bytes (aligning them to 64 bytes as well saves cache lines, but might result
  * in cache bank conflicts).
  */
+template <size_t r, int flags>
 static void
-smix2(uint8_t * B, size_t r, uint32_t N, uint64_t Nloop,
-    yescrypt_flags_t flags, salsa20_blk_t * V, uint32_t NROM,
-    const yescrypt_shared_t * shared, salsa20_blk_t * XY, void * S)
+    smix2(uint8_t * B, uint32_t N, uint64_t Nloop, salsa20_blk_t * V, uint32_t NROM,
+    const yescrypt_shared_t * shared, salsa20_blk_t * XY, void * _S)
 {
-	const salsa20_blk_t * VROM = shared->shared1.aligned;
+    const __m128i * S = (const __m128i *)_S;
+	const salsa20_blk_t * VROM = (const salsa20_blk_t *)shared->shared1.aligned;
 	uint32_t VROM_mask = shared->mask1;
 	size_t s = 2 * r;
 	salsa20_blk_t * X = XY, * Y = &XY[s];
@@ -921,96 +924,100 @@ smix2(uint8_t * B, size_t r, uint32_t N, uint64_t Nloop,
  * because YESCRYPT_PARALLEL_SMIX resets YESCRYPT_RW for the smix2() calls
  * operating on the entire V.
  */
-	if (NROM && (flags & YESCRYPT_RW)) {
-		/* 6: for i = 0 to N - 1 do */
-		for (i = 0; i < Nloop; i += 2) {
-			salsa20_blk_t * V_j = &V[j * s];
+    if (flags & YESCRYPT_RW) {
+        if (NROM){
+            /* 6: for i = 0 to N - 1 do */
+            for (i = 0; i < Nloop; i += 2) {
+                salsa20_blk_t * V_j = &V[j * s];
 
-			/* 8: X <-- H(X \xor V_j) */
-			/* V_j <-- Xprev \xor V_j */
-			/* j <-- Integerify(X) mod NROM */
-			j = blockmix_xor_save(X, V_j, Y, r, S);
+                /* 8: X <-- H(X \xor V_j) */
+                /* V_j <-- Xprev \xor V_j */
+                /* j <-- Integerify(X) mod NROM */
+                j = blockmix_xor_save(X, V_j, Y, r, S);
 
-			if (((i + 1) & VROM_mask) == 1) {
-				const salsa20_blk_t * VROM_j;
+                if (((i + 1) & VROM_mask) == 1) {
+                    const salsa20_blk_t * VROM_j;
 
-				j &= NROM - 1;
-				VROM_j = &VROM[j * s];
+                    j &= NROM - 1;
+                    VROM_j = &VROM[j * s];
 
-				/* X <-- H(X \xor VROM_j) */
-				/* 7: j <-- Integerify(X) mod N */
-				j = blockmix_xor(Y, VROM_j, X, r, 1, S);
-			} else {
-				j &= N - 1;
-				V_j = &V[j * s];
+                    /* X <-- H(X \xor VROM_j) */
+                    /* 7: j <-- Integerify(X) mod N */
+                    j = blockmix_xor(Y, VROM_j, X, r, 1, S);
+                } else {
+                    j &= N - 1;
+                    V_j = &V[j * s];
 
-				/* 8: X <-- H(X \xor V_j) */
-				/* V_j <-- Xprev \xor V_j */
-				/* j <-- Integerify(X) mod NROM */
-				j = blockmix_xor_save(Y, V_j, X, r, S);
-			}
-			j &= N - 1;
-			V_j = &V[j * s];
-		}
-	} else if (NROM) {
-		/* 6: for i = 0 to N - 1 do */
-		for (i = 0; i < Nloop; i += 2) {
-			const salsa20_blk_t * V_j = &V[j * s];
+                    /* 8: X <-- H(X \xor V_j) */
+                    /* V_j <-- Xprev \xor V_j */
+                    /* j <-- Integerify(X) mod NROM */
+                    j = blockmix_xor_save(Y, V_j, X, r, S);
+                }
+                j &= N - 1;
+                V_j = &V[j * s];
+            }
+        } else {
+            /* 6: for i = 0 to N - 1 do */
+            do {
+                salsa20_blk_t * V_j = &V[j * s];
 
-			/* 8: X <-- H(X \xor V_j) */
-			/* V_j <-- Xprev \xor V_j */
-			/* j <-- Integerify(X) mod NROM */
-			j = blockmix_xor(X, V_j, Y, r, 0, S);
+                /* 8: X <-- H(X \xor V_j) */
+                /* V_j <-- Xprev \xor V_j */
+                /* 7: j <-- Integerify(X) mod N */
+                j = blockmix_xor_save(X, V_j, Y, r, S);
+                j &= N - 1;
+                V_j = &V[j * s];
 
-			if (((i + 1) & VROM_mask) == 1) {
-				j &= NROM - 1;
-				V_j = &VROM[j * s];
-			} else {
-				j &= N - 1;
-				V_j = &V[j * s];
-			}
+                /* 8: X <-- H(X \xor V_j) */
+                /* V_j <-- Xprev \xor V_j */
+                /* 7: j <-- Integerify(X) mod N */
+                j = blockmix_xor_save(Y, V_j, X, r, S);
+                j &= N - 1;
+            } while (--i);
+        }
+    } else {
+        if (NROM) {
+            /* 6: for i = 0 to N - 1 do */
+            for (i = 0; i < Nloop; i += 2) {
+                const salsa20_blk_t * V_j = &V[j * s];
 
-			/* X <-- H(X \xor VROM_j) */
-			/* 7: j <-- Integerify(X) mod N */
-			j = blockmix_xor(Y, V_j, X, r, 1, S);
-			j &= N - 1;
-			V_j = &V[j * s];
-		}
-	} else if (flags & YESCRYPT_RW) {
-		/* 6: for i = 0 to N - 1 do */
-		do {
-			salsa20_blk_t * V_j = &V[j * s];
+                /* 8: X <-- H(X \xor V_j) */
+                /* V_j <-- Xprev \xor V_j */
+                /* j <-- Integerify(X) mod NROM */
+                j = blockmix_xor(X, V_j, Y, r, 0, S);
 
-			/* 8: X <-- H(X \xor V_j) */
-			/* V_j <-- Xprev \xor V_j */
-			/* 7: j <-- Integerify(X) mod N */
-			j = blockmix_xor_save(X, V_j, Y, r, S);
-			j &= N - 1;
-			V_j = &V[j * s];
+                if (((i + 1) & VROM_mask) == 1) {
+                    j &= NROM - 1;
+                    V_j = &VROM[j * s];
+                } else {
+                    j &= N - 1;
+                    V_j = &V[j * s];
+                }
 
-			/* 8: X <-- H(X \xor V_j) */
-			/* V_j <-- Xprev \xor V_j */
-			/* 7: j <-- Integerify(X) mod N */
-			j = blockmix_xor_save(Y, V_j, X, r, S);
-			j &= N - 1;
-		} while (--i);
-	} else {
-		/* 6: for i = 0 to N - 1 do */
-		do {
-			const salsa20_blk_t * V_j = &V[j * s];
+                /* X <-- H(X \xor VROM_j) */
+                /* 7: j <-- Integerify(X) mod N */
+                j = blockmix_xor(Y, V_j, X, r, 1, S);
+                j &= N - 1;
+                V_j = &V[j * s];
+            }
+        } else {
+            /* 6: for i = 0 to N - 1 do */
+            do {
+                const salsa20_blk_t * V_j = &V[j * s];
 
-			/* 8: X <-- H(X \xor V_j) */
-			/* 7: j <-- Integerify(X) mod N */
-			j = blockmix_xor(X, V_j, Y, r, 0, S);
-			j &= N - 1;
-			V_j = &V[j * s];
+                /* 8: X <-- H(X \xor V_j) */
+                /* 7: j <-- Integerify(X) mod N */
+                j = blockmix_xor(X, V_j, Y, r, 0, S);
+                j &= N - 1;
+                V_j = &V[j * s];
 
-			/* 8: X <-- H(X \xor V_j) */
-			/* 7: j <-- Integerify(X) mod N */
-			j = blockmix_xor(Y, V_j, X, r, 0, S);
-			j &= N - 1;
-		} while (--i);
-	}
+                /* 8: X <-- H(X \xor V_j) */
+                /* 7: j <-- Integerify(X) mod N */
+                j = blockmix_xor(Y, V_j, X, r, 0, S);
+                j &= N - 1;
+            } while (--i);
+        }
+    }
 
 	/* 10: B' <-- X */
 	for (k = 0; k < 2 * r; k++) {
@@ -1044,12 +1051,13 @@ p2floor(uint64_t x)
  * saves cache lines and helps avoid false sharing in OpenMP-enabled builds
  * when p > 1, but it might also result in cache bank conflicts).
  */
+template <size_t r, uint32_t N, uint32_t p, uint32_t t, int flags>
 static void
-smix(uint8_t * B, size_t r, uint32_t N, uint32_t p, uint32_t t,
-    yescrypt_flags_t flags,
-    salsa20_blk_t * V, uint32_t NROM, const yescrypt_shared_t * shared,
-    salsa20_blk_t * XY, void * S)
+smix(uint8_t * B,
+     salsa20_blk_t * V, uint32_t NROM, const yescrypt_shared_t * shared,
+     salsa20_blk_t * XY, void * S)
 {
+    if (p != 0) {
 	size_t s = 2 * r;
 	uint32_t Nchunk = N / p;
 	uint64_t Nloop_all, Nloop_rw;
@@ -1095,14 +1103,13 @@ smix(uint8_t * B, size_t r, uint32_t N, uint32_t p, uint32_t t,
 		salsa20_blk_t * XYp = XY;
 #endif
 		uint32_t Np = (i < p - 1) ? Nchunk : (N - Vchunk);
-		void * Sp = S ? ((uint8_t *)S + i * S_SIZE_ALL) : S;
+		salsa20_blk_t * Sp = (salsa20_blk_t *)(S ? ((uint8_t *)S + i * S_SIZE_ALL) : S);
 		if (Sp)
-			smix1(Bp, 1, S_SIZE_ALL / 128,
-			    flags & ~YESCRYPT_PWXFORM,
+			smix1<1, flags & ~YESCRYPT_PWXFORM>(Bp, S_SIZE_ALL / 128,
 			    Sp, NROM, shared, XYp, NULL);
 		if (!(flags & __YESCRYPT_INIT_SHARED_2))
-			smix1(Bp, r, Np, flags, Vp, NROM, shared, XYp, Sp);
-		smix2(Bp, r, p2floor(Np), Nloop_rw, flags, Vp,
+			smix1<r, flags>(Bp, Np, Vp, NROM, shared, XYp, Sp);
+		smix2<r, flags>(Bp, p2floor(Np), Nloop_rw, Vp,
 		    NROM, shared, XYp, Sp);
 	}
 
@@ -1118,13 +1125,14 @@ smix(uint8_t * B, size_t r, uint32_t N, uint32_t p, uint32_t t,
 			salsa20_blk_t * XYp = XY;
 #endif
 			void * Sp = S ? ((uint8_t *)S + i * S_SIZE_ALL) : S;
-			smix2(Bp, r, N, Nloop_all - Nloop_rw,
-			    flags & ~YESCRYPT_RW, V, NROM, shared, XYp, Sp);
+			smix2<r, flags & ~YESCRYPT_RW> (Bp, N, Nloop_all - Nloop_rw,
+			V, NROM, shared, XYp, Sp);
 		}
 	}
 #ifdef _OPENMP
 	}
 #endif
+    }
 }
 
 /**
@@ -1144,12 +1152,12 @@ smix(uint8_t * B, size_t r, uint32_t N, uint32_t p, uint32_t t,
  *
  * Return 0 on success; or -1 on error.
  */
+template <size_t passwdlen, size_t saltlen, uint64_t N, uint32_t r, uint32_t p, uint32_t t, int flags, size_t buflen>
 static int
 yescrypt_kdf(const yescrypt_shared_t * shared, yescrypt_local_t * local,
-    const uint8_t * passwd, size_t passwdlen,
-    const uint8_t * salt, size_t saltlen,
-    uint64_t N, uint32_t r, uint32_t p, uint32_t t, yescrypt_flags_t flags,
-    uint8_t * buf, size_t buflen)
+    const uint8_t * passwd,
+    const uint8_t * salt,
+    uint8_t * buf)
 {
 	yescrypt_region_t tmp;
 	uint64_t NROM;
@@ -1157,6 +1165,7 @@ yescrypt_kdf(const yescrypt_shared_t * shared, yescrypt_local_t * local,
 	uint8_t * B, * S;
 	salsa20_blk_t * V, * XY;
 	uint8_t sha256[32];
+    size_t pwlen = passwdlen;
 
 	/*
 	 * YESCRYPT_PARALLEL_SMIX is a no-op at p = 1 for its intended purpose,
@@ -1164,6 +1173,7 @@ yescrypt_kdf(const yescrypt_shared_t * shared, yescrypt_local_t * local,
 	 * enable the SHA-256 password pre-hashing and output post-hashing,
 	 * because any deviation from classic scrypt implies those.
 	 */
+#if 0
 	if (p == 1)
 		flags &= ~YESCRYPT_PARALLEL_SMIX;
 
@@ -1228,6 +1238,7 @@ yescrypt_kdf(const yescrypt_shared_t * shared, yescrypt_local_t * local,
 			return -1;
 		}
 	}
+#endif // #if 0
 
 	/* Allocate memory */
 	V = NULL;
@@ -1306,17 +1317,17 @@ yescrypt_kdf(const yescrypt_shared_t * shared, yescrypt_local_t * local,
 		SHA256_Update(&ctx, passwd, passwdlen);
 		SHA256_Final(sha256, &ctx);
 		passwd = sha256;
-		passwdlen = sizeof(sha256);
+		pwlen = sizeof(sha256);
 	}
 
 	/* 1: (B_0 ... B_{p-1}) <-- PBKDF2(P, S, 1, p * MFLen) */
-	PBKDF2_SHA256(passwd, passwdlen, salt, saltlen, 1, B, B_size);
+	PBKDF2_SHA256(passwd, pwlen, salt, saltlen, 1, B, B_size);
 
 	if (t || flags)
 		memcpy(sha256, B, sizeof(sha256));
 
 	if (p == 1 || (flags & YESCRYPT_PARALLEL_SMIX)) {
-		smix(B, r, N, p, t, flags, V, NROM, shared, XY, S);
+		smix<r, N, p, t, flags>(B, V, NROM, shared, XY, S);
 	} else {
 		uint32_t i;
 
@@ -1327,20 +1338,21 @@ yescrypt_kdf(const yescrypt_shared_t * shared, yescrypt_local_t * local,
 		for (i = 0; i < p; i++) {
 			/* 3: B_i <-- MF(B_i, N) */
 #ifdef _OPENMP
-			smix(&B[(size_t)128 * r * i], r, N, 1, t, flags,
+			smix<r, N, 1, t, flags>(&B[(size_t)128 * r * i],
 			    &V[(size_t)2 * r * i * N],
-			    NROM, shared,
+                                          NROM,
+			    shared,
 			    &XY[(size_t)4 * r * i],
 			    S ? &S[S_SIZE_ALL * i] : S);
 #else
-			smix(&B[(size_t)128 * r * i], r, N, 1, t, flags, V,
+			smix<r, N, p, t, flags>(&B[(size_t)128 * r * i], V,
 			    NROM, shared, XY, S);
 #endif
 		}
 	}
 
 	/* 5: DK <-- PBKDF2(P, B, 1, dkLen) */
-	PBKDF2_SHA256(passwd, passwdlen, B, B_size, 1, buf, buflen);
+	PBKDF2_SHA256(passwd, pwlen, B, B_size, 1, buf, buflen);
 
 	/*
 	 * Except when computing classic scrypt, allow all computation so far
