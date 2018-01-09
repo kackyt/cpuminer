@@ -1152,7 +1152,7 @@ smix(uint8_t * B,
  *
  * Return 0 on success; or -1 on error.
  */
-template <size_t passwdlen, size_t saltlen, uint64_t N, uint32_t r, uint32_t p, uint32_t t, int flags, size_t buflen>
+template <size_t passwdlen, size_t saltlen, uint64_t N, uint32_t r, uint32_t p, uint32_t t, int flags, size_t buflen, bool globalBoost>
 static int
 yescrypt_kdf(const yescrypt_shared_t * shared, yescrypt_local_t * local,
     const uint8_t * passwd,
@@ -1366,7 +1366,13 @@ yescrypt_kdf(const yescrypt_shared_t * shared, yescrypt_local_t * local,
 		{
 			HMAC_SHA256_CTX ctx;
 			HMAC_SHA256_Init(&ctx, buf, buflen);
-			HMAC_SHA256_Update(&ctx, "Client Key", 10);
+            if (globalBoost) {
+/* GlobalBoost-Y buggy yescrypt */
+                HMAC_SHA256_Update(&ctx, salt, saltlen);
+            } else {
+/* Proper yescrypt */
+                HMAC_SHA256_Update(&ctx, "Client Key", 10);
+            }
 			HMAC_SHA256_Final(sha256, &ctx);
 		}
 		/* Compute StoredKey */

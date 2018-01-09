@@ -102,12 +102,14 @@ struct workio_cmd {
 
 enum algos {
 	ALGO_YESCRYPT,
+    ALGO_YESCRYPTK,
 	ALGO_SCRYPT,		/* scrypt(1024,1,1) */
 	ALGO_SHA256D,		/* SHA-256d */
 };
 
 static const char *algo_names[] = {
 	[ALGO_YESCRYPT]		= "yescrypt",
+	[ALGO_YESCRYPTK]		= "yescryptk",
 	[ALGO_SCRYPT]		= "scrypt",
 	[ALGO_SHA256D]		= "sha256d",
 };
@@ -1051,7 +1053,7 @@ static void stratum_gen_work(struct stratum_ctx *sctx, struct work *work)
 		free(xnonce2str);
 	}
 
-	if (opt_algo == ALGO_SCRYPT || opt_algo == ALGO_YESCRYPT)
+	if (opt_algo == ALGO_SCRYPT || opt_algo == ALGO_YESCRYPT || opt_algo == ALGO_YESCRYPTK)
 		diff_to_target(work->target, sctx->job.diff / 65536.0);
 	else
 		diff_to_target(work->target, sctx->job.diff);
@@ -1144,7 +1146,8 @@ static void *miner_thread(void *userdata)
 		max64 *= thr_hashrates[thr_id];
 		if (max64 <= 0) {
 			switch (opt_algo) {
-                        case ALGO_YESCRYPT:
+            case ALGO_YESCRYPT:
+            case ALGO_YESCRYPTK:
 				max64 = 0x000fff;
 				break;
 			case ALGO_SCRYPT:
@@ -1165,6 +1168,10 @@ static void *miner_thread(void *userdata)
 
 		/* scan nonces for a proof-of-work hash */
 		switch (opt_algo) {
+        case ALGO_YESCRYPTK:
+			rc = scanhash_yescrypt_koto(thr_id, work.data, work.target,
+					       max_nonce, &hashes_done);
+            break;
 		case ALGO_YESCRYPT:
 			rc = scanhash_yescrypt(thr_id, work.data, work.target,
 					       max_nonce, &hashes_done);

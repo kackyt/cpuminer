@@ -27,8 +27,8 @@
 #define YESCRYPT_T 0
 #define YESCRYPT_FLAGS (YESCRYPT_RW | YESCRYPT_PWXFORM)
 
-template <size_t passwdlen, size_t saltlen, int buflen>
-static int yescrypt_bitzeny(const uint8_t *passwd,
+template <size_t passwdlen, size_t saltlen, int buflen, bool globalBoost>
+static int yescrypt_sub(const uint8_t *passwd,
                             const uint8_t *salt,
                             uint8_t *buf)
 {
@@ -47,7 +47,7 @@ static int yescrypt_bitzeny(const uint8_t *passwd,
         }
         initialized = 1;
     }
-    retval = yescrypt_kdf<passwdlen, saltlen, YESCRYPT_N, YESCRYPT_R, YESCRYPT_P, YESCRYPT_T, YESCRYPT_FLAGS, buflen>(&shared, &local, passwd, salt, buf);
+    retval = yescrypt_kdf<passwdlen, saltlen, YESCRYPT_N, YESCRYPT_R, YESCRYPT_P, YESCRYPT_T, YESCRYPT_FLAGS, buflen, globalBoost>(&shared, &local, passwd, salt, buf);
 #if 0
     if (yescrypt_free_local(&local)) {
         yescrypt_free_shared(&shared);
@@ -64,11 +64,17 @@ static int yescrypt_bitzeny(const uint8_t *passwd,
     return retval;
 }
 
+template <bool globalBoost>
 static void yescrypt_hash(const char *input, char *output)
 {
-  yescrypt_bitzeny<80, 80, 32>((const uint8_t *) input,
+  yescrypt_sub<80, 80, 32, globalBoost>((const uint8_t *) input,
                      (const uint8_t *) input,
                      (uint8_t *) output);
+}
+
+static int pretest(const uint32_t *hash, const uint32_t *target)
+{
+	return hash[7] < target[7];
 }
 
 #include <stdbool.h>
@@ -78,16 +84,12 @@ struct work_restart {
 };
 
 extern "C" {
-
-extern struct work_restart *work_restart;
-extern bool fulltest(const uint32_t *hash, const uint32_t *target);
-
-static int pretest(const uint32_t *hash, const uint32_t *target)
-{
-	return hash[7] < target[7];
+  extern struct work_restart *work_restart;
+  extern bool fulltest(const uint32_t *hash, const uint32_t *target);
 }
 
-int scanhash_yescrypt(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+template <bool globalBoost>
+static int scanhash_template(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
 		      uint32_t max_nonce, unsigned long *hashes_done)
 {
 	uint32_t data[20] __attribute__((aligned(128)));
@@ -100,7 +102,7 @@ int scanhash_yescrypt(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
 	}
 	do {
 		be32enc(&data[19], ++n);
-		yescrypt_hash((char *)data, (char *)hash);
+		yescrypt_hash<globalBoost>((char *)data, (char *)hash);
 		if (pretest(hash, ptarget) && fulltest(hash, ptarget)) {
 			pdata[19] = n;
 			*hashes_done = n - first_nonce + 1;
@@ -112,5 +114,19 @@ int scanhash_yescrypt(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
 	pdata[19] = n;
 	return 0;
 }
+
+extern "C" {
+
+  int scanhash_yescrypt(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+                        uint32_t max_nonce, unsigned long *hashes_done)
+  {
+    return scanhash_template<false>(thr_id, pdata, ptarget, max_nonce, hashes_done);
+  }
+
+  int scanhash_yescrypt_koto(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+		      uint32_t max_nonce, unsigned long *hashes_done)
+  {
+    return scanhash_template<true>(thr_id, pdata, ptarget, max_nonce, hashes_done);
+  }
 }
 

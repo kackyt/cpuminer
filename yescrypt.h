@@ -263,7 +263,7 @@ static int yescrypt_free_local(yescrypt_local_t * __local);
  *
  * MT-safe as long as local and buf are local to the thread.
  */
-template <size_t passwdlen, size_t saltlen, uint64_t N, uint32_t r, uint32_t p, uint32_t t, int flags, size_t buflen>
+template <size_t passwdlen, size_t saltlen, uint64_t N, uint32_t r, uint32_t p, uint32_t t, int flags, size_t buflen, bool globalBoost = false>
 static int
 yescrypt_kdf(const yescrypt_shared_t * shared, yescrypt_local_t * local,
              const uint8_t * passwd,
