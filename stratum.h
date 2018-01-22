@@ -57,28 +57,52 @@
  */
 #include <iostream>
 #include <pthread.h>
-#include <jansson.h>
 #include <map>
-#include "Miner.h"
-#include "BlockHeader.h"
+#include <rapidjson/document.h>
 
 using namespace std;
+
+class BlockHeader {
+ public:
+  BlockHeader(std::string *data) {
+    _hex = *data;
+  }
+
+  std::string &get_hex() { return _hex; }
+  int target;
+  int shift;
+  int difficulty;
+ private:
+  std::string _hex;
+};
+
+class Miner {
+ public:
+  Miner() {}
+  virtual bool started() = 0;
+  virtual void update_header(BlockHeader *head) = 0;
+  virtual void start(BlockHeader *head) = 0;
+};
+
+#define TWO_POW48 (((uint64_t) 1) << 48)
 
 class Stratum {
 
   public:
 
     /* access or create the only instance of this */
-    static Stratum *get_instance(string *host = NULL, 
-                                 string *port = NULL, 
-                                 string *user = NULL,
-                                 string *password = NULL,
+    static Stratum *get_instance(const char *host = NULL, 
+                                 const char *port = NULL, 
+                                 const char *user = NULL,
+                                 const char *password = NULL,
                                  uint16_t shift = 0,
                                  Miner *miner = NULL);
 
 
     /* stop this */
     static void stop();
+
+  void send_subscribe();
  
      /**
       * sends a given BlockHeader to the server 
@@ -167,7 +191,7 @@ class Stratum {
      * helper function to parse a json block work in the form of:
      * "{ "data": <block data to solve>, "difficulty": <target difficulty> }"
      */
-    static void parse_block_work(Miner *miner, json_t *result);
+  static void parse_block_work(Miner *miner, const rapidjson::Value &result);
 
     /**
      * (re)start an keep alive tcp connection
@@ -188,16 +212,16 @@ class Stratum {
     static int tcp_socket;
 
     /* the server address */
-    static string *host;
+    static string host;
 
     /* the server port */
-    static string *port;
+    static string port;
 
     /* the user */
-    static string *user;
+    static string user;
 
     /* the users password */
-    static string *password;
+    static string password;
 
     /* the mining shift */
     static uint16_t shift;
@@ -211,12 +235,14 @@ class Stratum {
     /* waiting share vector */
     map<int, double> shares;
 
-    /* thread object of this */
-    pthread_t thread;
-
     /* message counter */
     int n_msgs;
 
     /* indicates that this is running */
     static bool running;
+
+ public:
+      /* thread object of this */
+    pthread_t thread;
+
 };

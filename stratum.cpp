@@ -1,28 +1,13 @@
-/**
- * Stratum protocol implementation for GapMiner
- *
- * Copyright (C)  2014  The Gapcoin developers  <info@gapcoin.org>
- * 
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- * 
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- * 
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
 #include <pthread.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <iostream>
-#include <jansson.h>
+#include <sstream>
+#include <rapidjson/document.h>
 #include <cerrno>
 #include <cstring>
+#include <time.h>
+#include <stdlib.h>
 
 #ifndef WINDOWS
 #include <sys/types.h>
@@ -33,10 +18,7 @@
 #include <ws2tcpip.h>
 #endif
 
-#include "Stratum.h"
-#include "utils.h"
-
-#include "Opts.h"
+#include "stratum.h"
 
 using namespace std;
 
@@ -50,21 +32,22 @@ pthread_mutex_t Stratum::creation_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t Stratum::connect_mutex  = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t Stratum::send_mutex     = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t Stratum::shares_mutex   = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t io_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* the socket of this */
 int Stratum::tcp_socket = 0;
 
 /* the server address */
-string *Stratum::host = NULL;
+string Stratum::host;
 
 /* the server port */
-string *Stratum::port = NULL;
+string Stratum::port;
 
 /* the user */
-string *Stratum::user = NULL;
+string Stratum::user;
 
 /* the users password */
-string *Stratum::password = NULL;
+string Stratum::password;
 
 /* the mining shift */
 uint16_t Stratum::shift = 0;
@@ -74,6 +57,37 @@ Stratum *Stratum::only_instance;
 
 /* indicates that this is running */
 bool Stratum::running = true;
+
+enum {
+  LOG_D,
+  LOG_W,
+  LOG_I,
+  LOG_ERR,
+  LOG_WARNING,
+  LOG_NOTICE,
+  LOG_INFO,
+  LOG_DEBUG
+};
+
+static void log_str(std::string str, int level)
+{
+  printf("%s", str.c_str());
+  puts("");
+}
+
+static inline std::string get_time()
+{
+  char buf[256];
+  struct tm tim;
+  time_t t;
+
+  t = time(NULL);
+
+  localtime_r(&t, &tim);
+  strftime(buf, sizeof(buf), "%+", &tim);
+
+  return buf;
+}
 
 /**
  * returns the position of the first new line character in the given string
@@ -173,10 +187,10 @@ ssize_t recv_line(int sock_fd, char **buffer, ssize_t *capacity, int flags) {
 }
 
 /* access or create the only instance of this */
-Stratum *Stratum::get_instance(string *host, 
-                               string *port, 
-                               string *user,
-                               string *password,
+Stratum *Stratum::get_instance(const char *host, 
+                               const char *port, 
+                               const char *user,
+                               const char *password,
                                uint16_t shift,
                                Miner *miner) {
   
@@ -185,8 +199,8 @@ Stratum *Stratum::get_instance(string *host,
 
   /* allow only one creation */
   if (host  != NULL &&
-      port  != NULL && 
-      miner != NULL && 
+      port  != NULL &&
+      /*miner != NULL && */ 
       user  != NULL && 
       password != NULL && 
       shift >= 14 &&
@@ -314,7 +328,7 @@ void Stratum::reconnect() {
       hints.ai_family = AF_INET;
       hints.ai_socktype = SOCK_STREAM;
      
-      int ret = getaddrinfo(host->c_str(), port->c_str(), &hints, &result);
+      int ret = getaddrinfo(host.c_str(), port.c_str(), &hints, &result);
      
       if (ret != 0) {
         pthread_mutex_lock(&io_mutex);
@@ -348,7 +362,7 @@ Stratum::Stratum(Miner *miner) {
   this->targs = new ThreadArgs(miner, &shares);
   pthread_create(&thread, NULL, recv_thread, targs);
 
-  getwork();
+  send_subscribe();
 }
 
 Stratum::~Stratum() {
@@ -365,6 +379,8 @@ Stratum::ThreadArgs::ThreadArgs(Miner *miner, map<int, double> *shares) {
   this->shares  = shares;
   this->running = true;
 }
+
+using namespace rapidjson;
 
 /**
  * Thread that listens for new messages from the server.
@@ -405,19 +421,19 @@ void *Stratum::recv_thread(void *arg) {
   ssize_t buf_len = 1024;
   char *buffer = (char *) malloc(sizeof(char) * buf_len);
 
-
+#if 0
   if (Opts::get_instance()->has_extra_vb()) {
     pthread_mutex_lock(&io_mutex);
     cout << get_time() << "Stratum thread started\n";
     pthread_mutex_unlock(&io_mutex);
   }
+#endif
 
   while (targs->running) {
     
     /* receive message from server */
     if (recv_line(tcp_socket, &buffer, &buf_len, 0) < 0) {
 
-      log_str("recv: \"" + string(buffer, buf_len) + "\"", LOG_D);
       pthread_mutex_lock(&io_mutex);
       cout << get_time() << "Error receiving message form server: " << endl;
       pthread_mutex_unlock(&io_mutex);
@@ -426,74 +442,69 @@ void *Stratum::recv_thread(void *arg) {
       reconnect();
       get_instance()->getwork();
     }
+    log_str("recv: \"" + string(buffer, buf_len) + "\"", LOG_D);
 
-    json_t *root, *real_root;
-    json_error_t error;
+    Document doc;
+
+    doc.Parse(buffer);
  
-    root = json_loads(buffer, 0, &error);
-    real_root = root;
- 
-    if(!root) {
-      log_str("jansson error: on line " + itoa(error.line) + ":" + error.text, LOG_W);
+    if(doc.HasParseError()) {
+      log_str("json parse error" , LOG_W);
       pthread_mutex_lock(&io_mutex);
-      cout << get_time() << "jansson error: on line " << error.line;
-      cout << ": " << error.text << endl;
+      cout << get_time() << "json error ";
       pthread_mutex_unlock(&io_mutex);
       continue;
     }
  
-    if (!json_is_object(root)) {
+    if (!doc.IsObject()) {
       log_str("can not parse server response", LOG_W);
       pthread_mutex_lock(&io_mutex);
       cout << get_time() << "can not parse server response" << endl;
       pthread_mutex_unlock(&io_mutex);
-      json_decref(real_root);
       continue;
     }
-    json_t *j_id = json_object_get(root, "id");
- 
-    /* parse response */
-    if (json_is_integer(j_id)) {
-      int id = json_number_value(j_id);
 
-      json_t *result = json_object_get(root, "result");
+    const Value & idObj = doc["id"];
 
-      /* share response */
-      if (json_is_boolean(result)) {
-        process_share(shares, id, json_is_true(result));
+    if (idObj.IsInt()) {
+      /* responce */
+      int id = doc["id"].GetInt();
+      const Value& result = doc["result"];
 
-      /* getwork response */
-      } else if (json_is_object(result)) {
-        parse_block_work(miner, result);
-
-      } else if (json_is_null(result)) {
-        log_str("Found share stale!", LOG_I);
+      if (result.IsBool()) {
+        /* mining.submit response */
+        process_share(shares, id, result.GetBool());
+      } else if (result.IsArray()) {
+        /* mining.subscribe responce */
         pthread_mutex_lock(&io_mutex);
-        cout << get_time() << "Found share stale!" << endl;
-        pthread_mutex_unlock(&io_mutex);
-
-      } else {
-        log_str("can not parse server response", LOG_W);
-        pthread_mutex_lock(&io_mutex);
-        cout << get_time() << "can not parse server response" << endl;
+        cout << get_time() << "mining.subscribe responce" << endl;
         pthread_mutex_unlock(&io_mutex);
       }
-      json_decref(real_root);
-
-    /* block notify message */
     } else {
-      json_t *params = json_object_get(root, "params");
-      
-      if (json_is_object(params)) {
-        parse_block_work(miner, params);
+      /* server message */
+      const std::string method = doc["method"].GetString();
+      const Value & params = doc["params"];
 
+      cout << "method : " << method << endl;
+
+      if (method == "client.show_message") {
+        pthread_mutex_lock(&io_mutex);
+        cout << get_time() << "client.show_message" << endl;
+        pthread_mutex_unlock(&io_mutex);
+      } else if (method == "mining.set_difficulty") {
+        pthread_mutex_lock(&io_mutex);
+        cout << get_time() << "mining.set_difficulty" << endl;
+        pthread_mutex_unlock(&io_mutex);
+      } else if (method == "mining.notify"){
+        pthread_mutex_lock(&io_mutex);
+        cout << get_time() << "mining.notify" << endl;
+        pthread_mutex_unlock(&io_mutex);
       } else {
         log_str("can not parse server response", LOG_W);
         pthread_mutex_lock(&io_mutex);
         cout << get_time() << "can not parse server response" << endl;
         pthread_mutex_unlock(&io_mutex);
       }
-      json_decref(real_root);
     }
   }
 
@@ -518,8 +529,8 @@ void Stratum::process_share(map<int, double> *shares, int id, bool accepted) {
   }
   
 
-  log_str("Found Share: " + itoa(shares->at(id) * TWO_POW48) + " => " +
-      (accepted ? "accepted" : "stale!"), LOG_I);
+  /*log_str("Found Share: " + itoa(shares->at(id) * TWO_POW48) + " => " +
+    (accepted ? "accepted" : "stale!"), LOG_I); */
 
   pthread_mutex_lock(&io_mutex);
   cout.precision(4);
@@ -537,33 +548,32 @@ void Stratum::process_share(map<int, double> *shares, int id, bool accepted) {
 /* helper function to parse a json block work in the form of:
  * "{ "data": <block data to solve>, "difficulty": <target difficulty> }"
  */
-void Stratum::parse_block_work(Miner *miner, json_t *result) {
+void Stratum::parse_block_work(Miner *miner, const Value &result) {
 
   log_str("parse_block_work", LOG_D);
-  json_t *tdiff;
 
-  tdiff  = json_object_get(result, "difficulty");
-  result = json_object_get(result, "data");
+  auto &tdiff  = result["difficulty"];
+  auto &dObj = result["data"];
 
   /* parse difficulty */
-  if (!json_is_integer(tdiff)) {
+  if (!tdiff.IsUint64()) {
     pthread_mutex_lock(&io_mutex);
     cout << get_time() << "can not parse server difficulty" << endl;
     pthread_mutex_unlock(&io_mutex);
     return;
   }
 
-  uint64_t nDiff = json_number_value(tdiff);
+  uint64_t nDiff = tdiff.GetUint64();
 
   /* parse block data */
-  if (!json_is_string(result)) {
+  if (!dObj.IsString()) {
     log_str("can not parse server difficulty", LOG_W);
     pthread_mutex_lock(&io_mutex);
     cout << get_time() << "can not parse server block data" << endl;
     pthread_mutex_unlock(&io_mutex);
     return;
   }
-  string data = json_string_value(result);
+  string data = dObj.GetString();
   
   BlockHeader head(&data);
   head.target = nDiff;
@@ -575,8 +585,8 @@ void Stratum::parse_block_work(Miner *miner, json_t *result) {
   else
     miner->start(&head);
 
-  log_str("Got new target: " + itoa(head.target) + " @ " + 
-      itoa(head.difficulty), LOG_I);
+  /* log_str("Got new target: " + itoa(head.target) + " @ " + 
+     itoa(head.difficulty), LOG_I);*/
 
   pthread_mutex_lock(&io_mutex);
   cout.precision(7);
@@ -584,6 +594,39 @@ void Stratum::parse_block_work(Miner *miner, json_t *result) {
   cout << fixed << (((double) head.target) / TWO_POW48) << " @ ";
   cout << fixed << (((double) head.difficulty) / TWO_POW48) << endl;
   pthread_mutex_unlock(&io_mutex);
+}
+
+void Stratum::send_subscribe() {
+  stringstream ss;
+  ss << "{\"id\": " << n_msgs;
+  ss << ", \"method\": \"mining.subscribe\", \"params\": ";
+  ss << "[ \"kackyminer/1.0\"]";
+  ss << "}\n";
+  bool error;
+  string subscribe = ss.str();
+  do {
+    error = false;
+
+    /* send the share to the pool */
+    log_str("sendsubscribe", LOG_D);
+    size_t ret = send(tcp_socket, subscribe.c_str(), subscribe.length(), 0);
+ 
+    if (ret != subscribe.length()) {
+ 
+      log_str("Submitting share failed", LOG_W);
+      pthread_mutex_lock(&io_mutex);
+      cout << get_time() << "Submitting share failed" << endl;
+      pthread_mutex_unlock(&io_mutex);
+      error = true;
+      reconnect();
+    }
+
+  } while (running && error);
+
+  pthread_mutex_lock(&shares_mutex);
+  // TODO shares[n_msgs] = ((double) header->get_pow().difficulty()) / TWO_POW48;
+  n_msgs++;
+  pthread_mutex_unlock(&shares_mutex);
 }
 
 /**
@@ -600,7 +643,7 @@ bool Stratum::sendwork(BlockHeader *header) {
   stringstream ss;
   ss << "{\"id\": " << n_msgs;
   ss << ", \"method\": \"mining.submit\", \"params\": ";
-  ss << "[ \"" << *user << "\", \"" << *password;
+  ss << "[ \"" << user << "\", \"" << password;
   ss << "\", \"" << header->get_hex()  << "\" ] }\n";
 
   bool error;
@@ -625,7 +668,7 @@ bool Stratum::sendwork(BlockHeader *header) {
   } while (running && error);
 
   pthread_mutex_lock(&shares_mutex);
-  shares[n_msgs] = ((double) header->get_pow().difficulty()) / TWO_POW48;
+  // TODO shares[n_msgs] = ((double) header->get_pow().difficulty()) / TWO_POW48;
   n_msgs++;
   pthread_mutex_unlock(&shares_mutex);
 
@@ -646,9 +689,9 @@ BlockHeader *Stratum::getwork() {
   
   stringstream ss;
   ss << "{\"id\": " << n_msgs;
-  ss << ", \"method\": \"mining.request\", \"params\": ";
+  ss << ", \"method\": \"getwork\", \"params\": [] } \n";
   /* not optimal password should be hashed */
-  ss << "[ \"" << *user << "\", \"" << *password  << "\" ] }\n";
+  // ss << "[ \"" << user << "\", \"" << password  << "\" ] }\n";
 
   string request = ss.str();
 
