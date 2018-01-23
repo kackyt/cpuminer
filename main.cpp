@@ -10,7 +10,7 @@ main()
                                      "kacky.test",
                                       "password",
                                       15);
-  printf("%p", st);
+  printf("%p\n", st);
   pthread_join(st->thread, NULL);
   return 0;
 }

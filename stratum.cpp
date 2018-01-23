@@ -352,6 +352,7 @@ Stratum::Stratum(const char *host,
 
   pthread_create(&thread, NULL, recv_thread, targs);
   send_subscribe();
+  send_authorize();
 }
 
 Stratum::~Stratum() {
@@ -587,6 +588,39 @@ void Stratum::parse_block_work(Miner *miner, const Value &result) {
   pthread_mutex_unlock(&io_mutex);
 }
 
+void Stratum::send_authorize() {
+  stringstream ss;
+  ss << "{\"id\": " << n_msgs;
+  ss << ", \"method\": \"mining.authorize\", \"params\": ";
+  ss << "[ \"" << user <<  "\" , \"" << password << "\"]";
+  ss << "}\n";
+  bool error;
+  string subscribe = ss.str();
+  do {
+    error = false;
+
+    /* send the share to the pool */
+    log_str("send_authorize", LOG_D);
+    size_t ret = send(tcp_socket, subscribe.c_str(), subscribe.length(), 0);
+ 
+    if (ret != subscribe.length()) {
+ 
+      log_str("Submitting share failed", LOG_W);
+      pthread_mutex_lock(&io_mutex);
+      cout << get_time() << "Submitting share failed" << endl;
+      pthread_mutex_unlock(&io_mutex);
+      error = true;
+      reconnect();
+    }
+
+  } while (running && error);
+
+  pthread_mutex_lock(&shares_mutex);
+  // TODO shares[n_msgs] = ((double) header->get_pow().difficulty()) / TWO_POW48;
+  n_msgs++;
+  pthread_mutex_unlock(&shares_mutex);
+}
+
 void Stratum::send_subscribe() {
   stringstream ss;
   ss << "{\"id\": " << n_msgs;
@@ -599,7 +633,7 @@ void Stratum::send_subscribe() {
     error = false;
 
     /* send the share to the pool */
-    log_str("sendsubscribe", LOG_D);
+    log_str("send_subscribe", LOG_D);
     size_t ret = send(tcp_socket, subscribe.c_str(), subscribe.length(), 0);
  
     if (ret != subscribe.length()) {

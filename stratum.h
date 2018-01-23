@@ -101,6 +101,7 @@ class Stratum {
     /* stop this */
     void stop();
 
+    void send_authorize();
     void send_subscribe();
  
     /**
