@@ -58,6 +58,8 @@
 #include <iostream>
 #include <pthread.h>
 #include <map>
+#include <vector>
+#include <memory>
 #include <rapidjson/document.h>
 
 using namespace std;
@@ -83,6 +85,24 @@ class Miner {
     virtual void update_header(BlockHeader *head) = 0;
     virtual void start(BlockHeader *head) = 0;
 };
+
+struct Job {
+  public:
+    std::string job_id;
+    unsigned char prevhash[32];
+    size_t coinbase_size;
+    std::unique_ptr<unsigned char[]> coinbase;
+    unsigned char *xnonce2;
+    int merkle_count;
+    std::vector<std::unique_ptr<unsigned char[]>>merkles;
+    unsigned char version[4];
+    unsigned char nbits[4];
+    unsigned char ntime[4];
+    bool clean;
+    double difficulty;
+};
+
+using JobPtr = std::shared_ptr<Job>;
 
 #define TWO_POW48 (((uint64_t) 1) << 48)
 
@@ -204,6 +224,7 @@ class Stratum {
      */
     void reinit();
 
+    void parse_notify(const rapidjson::Value &params);
     /**
      * (re)connect to a given addr
      */
@@ -251,4 +272,10 @@ class Stratum {
     /* thread object of this */
     pthread_t thread;
 
+    JobPtr current_job;
+
+    std::unique_ptr<unsigned char[]> xnonce1;
+    size_t xnonce1_size;
+    size_t xnonce2_size;
+    double difficulty;
 };

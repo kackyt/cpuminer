@@ -491,6 +491,7 @@ void *Stratum::recv_thread(void *arg) {
         pthread_mutex_lock(&io_mutex);
         cout << get_time() << "mining.notify" << endl;
         pthread_mutex_unlock(&io_mutex);
+        client->parse_notify(params);
       } else {
         log_str("can not parse server response", LOG_W);
         pthread_mutex_lock(&io_mutex);
@@ -700,6 +701,74 @@ bool Stratum::sendwork(BlockHeader *header) {
   return true;
 }
 
+bool hex2bin(unsigned char *p, const char *hexstr, size_t len)
+{
+     char hex_byte[3];
+     char *ep;
+
+     hex_byte[2] = '\0';
+
+     while (*hexstr && len) {
+          if (!hexstr[1]) {
+               printf("hex2bin str truncated");
+               return false;
+          }
+          hex_byte[0] = hexstr[0];
+          hex_byte[1] = hexstr[1];
+          *p = (unsigned char) strtol(hex_byte, &ep, 16);
+          if (*ep) {
+              printf("hex2bin failed on '%s'", hex_byte);
+              return false;
+          }
+          p++;
+          hexstr += 2;
+          len--;
+     }
+
+     return (len == 0 && *hexstr == 0) ? true : false;
+}
+
+
+void Stratum::parse_notify(const Value &params)
+{
+    current_job = std::make_shared<Job>();
+    std::string job_id = params[0].GetString();
+    const char *prevhash = params[1].GetString();
+    const char *coinb1 = params[2].GetString();
+    const char *coinb2 = params[3].GetString();
+    const Value & merkle_arr = params[4];
+    const char *version = params[5].GetString();
+    const char *nbits = params[6].GetString();
+    const char *ntime = params[7].GetString();
+    bool clean = params[8].GetBool();
+
+    for (int i = 0; i < merkle_arr.Size(); i++) {
+        current_job->merkles.emplace_back(new unsigned char[32]);
+        auto & merkle = current_job->merkles.back();
+        hex2bin(merkle.get(), merkle_arr[i].GetString(), 32);
+    }
+
+    size_t coinb1_size = strlen(coinb1) / 2;
+    size_t coinb2_size = strlen(coinb2) / 2;
+
+    current_job->coinbase_size = coinb1_size + xnonce1_size + xnonce2_size + coinb2_size;
+    current_job->coinbase = std::unique_ptr<unsigned char[]>(new unsigned char[current_job->coinbase_size]);
+    current_job->xnonce2 = &current_job->coinbase[coinb1_size + xnonce1_size];
+    hex2bin(current_job->coinbase.get(), coinb1, coinb1_size);
+    memcpy(&current_job->coinbase[coinb1_size], xnonce1.get(), xnonce1_size);
+    if (current_job->job_id != job_id) {
+        memset(current_job->xnonce2, 0, xnonce2_size);
+    }
+    hex2bin(&current_job->xnonce2[xnonce2_size], coinb2, coinb2_size);
+    hex2bin(current_job->version, version, 4);
+    hex2bin(current_job->nbits, nbits, 4);
+    hex2bin(current_job->ntime, ntime, 4);
+
+    current_job->clean = clean;
+    current_job->difficulty = difficulty;
+}
+
+
 /**
  * request new work, return is always NULL, 
  * because it handles response internally .
@@ -751,4 +820,3 @@ void Stratum::stop() {
   running = false;
   close(tcp_socket);
 }
-
