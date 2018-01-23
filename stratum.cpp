@@ -34,29 +34,8 @@ pthread_mutex_t Stratum::send_mutex     = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t Stratum::shares_mutex   = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t io_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-/* the socket of this */
-int Stratum::tcp_socket = 0;
-
-/* the server address */
-string Stratum::host;
-
-/* the server port */
-string Stratum::port;
-
-/* the user */
-string Stratum::user;
-
-/* the users password */
-string Stratum::password;
-
-/* the mining shift */
-uint16_t Stratum::shift = 0;
-
 /* the only instance of this */
-Stratum *Stratum::only_instance;
-
-/* indicates that this is running */
-bool Stratum::running = true;
+Stratum *Stratum::only_instance = nullptr;
 
 enum {
   LOG_D,
@@ -206,12 +185,6 @@ Stratum *Stratum::get_instance(const char *host,
       shift >= 14 &&
       only_instance == NULL) {
 
-    Stratum::host = host;
-    Stratum::port = port;
-    Stratum::user = user;
-    Stratum::password = password;
-    Stratum::shift    = shift;
-
 #ifdef WINDOWS
     WSADATA data;
     int res = WSAStartup(MAKEWORD(2,2), &data);
@@ -222,10 +195,12 @@ Stratum *Stratum::get_instance(const char *host,
     }
 #endif
 
-    
-    reconnect();
-
-    only_instance = new Stratum(miner);
+    only_instance = new Stratum(host,
+                                port,
+                                user,
+                                password,
+                                shift,
+                                miner);
   }
 
   pthread_mutex_unlock(&creation_mutex);
@@ -355,13 +330,27 @@ void Stratum::reconnect() {
 }
 
 /* creates a new Stratum instance */
-Stratum::Stratum(Miner *miner) {
+Stratum::Stratum(const char *host,
+                 const char *port,
+                 const char *user,
+                 const char *password,
+                 uint16_t shift,
+                 Miner *miner) :
+    host(host),
+    port(port),
+    user(user),
+    password(password),
+    shift(shift),
+    tcp_socket(-1)
+{
 
   log_str("create", LOG_D);
   this->n_msgs = 0;
-  this->targs = new ThreadArgs(miner, &shares);
-  pthread_create(&thread, NULL, recv_thread, targs);
+  this->targs = new ThreadArgs(this, miner, &shares);
+  running = true;
+  reconnect();
 
+  pthread_create(&thread, NULL, recv_thread, targs);
   send_subscribe();
 }
 
@@ -374,10 +363,11 @@ Stratum::~Stratum() {
   delete targs;
 }
 
-Stratum::ThreadArgs::ThreadArgs(Miner *miner, map<int, double> *shares) {
-  this->miner   = miner;
-  this->shares  = shares;
-  this->running = true;
+Stratum::ThreadArgs::ThreadArgs(Stratum *client, Miner *miner, map<int, double> *shares) {
+    this->client = client;
+    this->miner   = miner;
+    this->shares  = shares;
+    this->running = true;
 }
 
 using namespace rapidjson;
@@ -416,6 +406,7 @@ void *Stratum::recv_thread(void *arg) {
   
   log_str("recv_thread started", LOG_D);
   ThreadArgs *targs = (ThreadArgs *) arg;
+  Stratum *client = targs->client;
   Miner *miner = targs->miner;
   map<int, double> *shares = targs->shares;
   ssize_t buf_len = 1024;
@@ -432,15 +423,15 @@ void *Stratum::recv_thread(void *arg) {
   while (targs->running) {
     
     /* receive message from server */
-    if (recv_line(tcp_socket, &buffer, &buf_len, 0) < 0) {
+    if (recv_line(client->tcp_socket, &buffer, &buf_len, 0) < 0) {
 
       pthread_mutex_lock(&io_mutex);
       cout << get_time() << "Error receiving message form server: " << endl;
       pthread_mutex_unlock(&io_mutex);
 
       /* reset connection */
-      reconnect();
-      get_instance()->getwork();
+      client->reconnect();
+      // get_instance()->getwork();
     }
     log_str("recv: \"" + string(buffer, buf_len) + "\"", LOG_D);
 
@@ -473,7 +464,7 @@ void *Stratum::recv_thread(void *arg) {
 
       if (result.IsBool()) {
         /* mining.submit response */
-        process_share(shares, id, result.GetBool());
+        client->process_share(shares, id, result.GetBool());
       } else if (result.IsArray()) {
         /* mining.subscribe responce */
         pthread_mutex_lock(&io_mutex);
@@ -723,7 +714,7 @@ BlockHeader *Stratum::getwork() {
 void Stratum::stop() {
 
   log_str("stop", LOG_D);
-  Stratum::running = false;
+  running = false;
   close(tcp_socket);
 }
 

@@ -63,31 +63,30 @@
 using namespace std;
 
 class BlockHeader {
- public:
-  BlockHeader(std::string *data) {
-    _hex = *data;
-  }
+  public:
+    BlockHeader(std::string *data) {
+        _hex = *data;
+    }
 
-  std::string &get_hex() { return _hex; }
-  int target;
-  int shift;
-  int difficulty;
- private:
-  std::string _hex;
+    std::string &get_hex() { return _hex; }
+    int target;
+    int shift;
+    int difficulty;
+  private:
+    std::string _hex;
 };
 
 class Miner {
- public:
-  Miner() {}
-  virtual bool started() = 0;
-  virtual void update_header(BlockHeader *head) = 0;
-  virtual void start(BlockHeader *head) = 0;
+  public:
+    Miner() {}
+    virtual bool started() = 0;
+    virtual void update_header(BlockHeader *head) = 0;
+    virtual void start(BlockHeader *head) = 0;
 };
 
 #define TWO_POW48 (((uint64_t) 1) << 48)
 
 class Stratum {
-
   public:
 
     /* access or create the only instance of this */
@@ -100,19 +99,19 @@ class Stratum {
 
 
     /* stop this */
-    static void stop();
+    void stop();
 
-  void send_subscribe();
+    void send_subscribe();
  
-     /**
-      * sends a given BlockHeader to the server 
-      * with a stratum request, the response should
-      * tell if the share was accepted or not.
-      *
-      * The format should be:
-      *   "{ "id": <id of the share>, "result": <true/false>,
-      *      "error": <null or errors string> }"
-      */
+    /**
+     * sends a given BlockHeader to the server 
+     * with a stratum request, the response should
+     * tell if the share was accepted or not.
+     *
+     * The format should be:
+     *   "{ "id": <id of the share>, "result": <true/false>,
+     *      "error": <null or errors string> }"
+     */
     bool sendwork(BlockHeader *header);
  
     /**
@@ -163,19 +162,25 @@ class Stratum {
   private:
 
     /* creates a new Stratum instance */
-    Stratum(Miner *miner);
+    Stratum(const char *host = NULL,
+            const char *port = NULL,
+            const char *user = NULL,
+            const char *password = NULL,
+            uint16_t shift = 0,
+            Miner *miner = NULL);
 
     ~Stratum();
 
     /* class holding info for the recv_thread */
     class ThreadArgs {
-      
+
       public :
+        Stratum *client;
         Miner *miner;
         map<int, double> *shares;
         bool running;
 
-        ThreadArgs(Miner *miner, map<int, double> *shares);
+        ThreadArgs(Stratum *client, Miner *miner, map<int, double> *shares);
     };
 
     /* synchronization mutexes */
@@ -185,46 +190,43 @@ class Stratum {
     static pthread_mutex_t shares_mutex;
 
     /* helper function which processes an response share */
-    static void process_share(map<int, double> *shares, int id, bool accepted);
+    void process_share(map<int, double> *shares, int id, bool accepted);
 
     /**
      * helper function to parse a json block work in the form of:
      * "{ "data": <block data to solve>, "difficulty": <target difficulty> }"
      */
-  static void parse_block_work(Miner *miner, const rapidjson::Value &result);
+    void parse_block_work(Miner *miner, const rapidjson::Value &result);
 
     /**
      * (re)start an keep alive tcp connection
      */
-    static void reinit();
+    void reinit();
 
     /**
      * (re)connect to a given addr
      */
-    static bool connect_to_addr(struct addrinfo *addr);
+    bool connect_to_addr(struct addrinfo *addr);
 
     /**
      * (re)connect to a given pool
      */
-    static void reconnect();
-
-    /* the socket of this */
-    static int tcp_socket;
+    void reconnect();
 
     /* the server address */
-    static string host;
+    string host;
 
     /* the server port */
-    static string port;
+    string port;
 
     /* the user */
-    static string user;
+    string user;
 
     /* the users password */
-    static string password;
+    string password;
 
     /* the mining shift */
-    static uint16_t shift;
+    uint16_t shift;
 
     /* the only instance of this */
     static Stratum *only_instance;
@@ -239,10 +241,13 @@ class Stratum {
     int n_msgs;
 
     /* indicates that this is running */
-    static bool running;
+    bool running;
 
- public:
-      /* thread object of this */
+  public:
+    /* the socket of this */
+    int tcp_socket;
+
+    /* thread object of this */
     pthread_t thread;
 
 };
