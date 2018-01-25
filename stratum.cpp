@@ -171,7 +171,7 @@ Stratum *Stratum::get_instance(const char *host,
                                const char *user,
                                const char *password,
                                uint16_t shift,
-                               Miner *miner) {
+                               AbstractMiner *miner) {
   
   log_str("get_instance", LOG_D);
   pthread_mutex_lock(&creation_mutex);
@@ -335,7 +335,7 @@ Stratum::Stratum(const char *host,
                  const char *user,
                  const char *password,
                  uint16_t shift,
-                 Miner *miner) :
+                 AbstractMiner *miner) :
     host(host),
     port(port),
     user(user),
@@ -351,8 +351,8 @@ Stratum::Stratum(const char *host,
   reconnect();
 
   pthread_create(&thread, NULL, recv_thread, targs);
-  send_subscribe();
   send_authorize();
+  send_subscribe();
 }
 
 Stratum::~Stratum() {
@@ -364,7 +364,7 @@ Stratum::~Stratum() {
   delete targs;
 }
 
-Stratum::ThreadArgs::ThreadArgs(Stratum *client, Miner *miner, map<int, double> *shares) {
+Stratum::ThreadArgs::ThreadArgs(Stratum *client, AbstractMiner *miner, map<int, double> *shares) {
     this->client = client;
     this->miner   = miner;
     this->shares  = shares;
@@ -408,7 +408,7 @@ void *Stratum::recv_thread(void *arg) {
   log_str("recv_thread started", LOG_D);
   ThreadArgs *targs = (ThreadArgs *) arg;
   Stratum *client = targs->client;
-  Miner *miner = targs->miner;
+  AbstractMiner *miner = targs->miner;
   map<int, double> *shares = targs->shares;
   ssize_t buf_len = 1024;
   char *buffer = (char *) malloc(sizeof(char) * buf_len);
@@ -538,57 +538,6 @@ void Stratum::process_share(map<int, double> *shares, int id, bool accepted) {
   pthread_mutex_unlock(&shares_mutex);
 }
 
-/* helper function to parse a json block work in the form of:
- * "{ "data": <block data to solve>, "difficulty": <target difficulty> }"
- */
-void Stratum::parse_block_work(Miner *miner, const Value &result) {
-
-  log_str("parse_block_work", LOG_D);
-
-  auto &tdiff  = result["difficulty"];
-  auto &dObj = result["data"];
-
-  /* parse difficulty */
-  if (!tdiff.IsUint64()) {
-    pthread_mutex_lock(&io_mutex);
-    cout << get_time() << "can not parse server difficulty" << endl;
-    pthread_mutex_unlock(&io_mutex);
-    return;
-  }
-
-  uint64_t nDiff = tdiff.GetUint64();
-
-  /* parse block data */
-  if (!dObj.IsString()) {
-    log_str("can not parse server difficulty", LOG_W);
-    pthread_mutex_lock(&io_mutex);
-    cout << get_time() << "can not parse server block data" << endl;
-    pthread_mutex_unlock(&io_mutex);
-    return;
-  }
-  string data = dObj.GetString();
-  
-  BlockHeader head(&data);
-  head.target = nDiff;
-  head.shift  = shift;
-
-  /* update work */
-  if (miner->started())
-    miner->update_header(&head);
-  else
-    miner->start(&head);
-
-  /* log_str("Got new target: " + itoa(head.target) + " @ " + 
-     itoa(head.difficulty), LOG_I);*/
-
-  pthread_mutex_lock(&io_mutex);
-  cout.precision(7);
-  cout << get_time() << "Got new target: ";
-  cout << fixed << (((double) head.target) / TWO_POW48) << " @ ";
-  cout << fixed << (((double) head.difficulty) / TWO_POW48) << endl;
-  pthread_mutex_unlock(&io_mutex);
-}
-
 void Stratum::send_authorize() {
   stringstream ss;
   ss << "{\"id\": " << n_msgs;
@@ -655,52 +604,6 @@ void Stratum::send_subscribe() {
   pthread_mutex_unlock(&shares_mutex);
 }
 
-/**
- * sends a given BlockHeader to the server 
- * with a stratum request, the response should
- * tell if the share was accepted or not.
- *
- * The format should be:
- *   "{ "id": <id of the share>, "result": <true/false>,
- *      "error": <null or errors string> }"
- */
-bool Stratum::sendwork(BlockHeader *header) {
-
-  stringstream ss;
-  ss << "{\"id\": " << n_msgs;
-  ss << ", \"method\": \"mining.submit\", \"params\": ";
-  ss << "[ \"" << user << "\", \"" << password;
-  ss << "\", \"" << header->get_hex()  << "\" ] }\n";
-
-  bool error;
-  string share = ss.str();
-  do {
-    error = false;
-
-    /* send the share to the pool */
-    log_str("sendwork: \"" + share + "\"", LOG_D);
-    size_t ret = send(tcp_socket, share.c_str(), share.length(), 0);
- 
-    if (ret != share.length()) {
- 
-      log_str("Submitting share failed", LOG_W);
-      pthread_mutex_lock(&io_mutex);
-      cout << get_time() << "Submitting share failed" << endl;
-      pthread_mutex_unlock(&io_mutex);
-      error = true;
-      reconnect();
-    }
-
-  } while (running && error);
-
-  pthread_mutex_lock(&shares_mutex);
-  // TODO shares[n_msgs] = ((double) header->get_pow().difficulty()) / TWO_POW48;
-  n_msgs++;
-  pthread_mutex_unlock(&shares_mutex);
-
-  return true;
-}
-
 bool hex2bin(unsigned char *p, const char *hexstr, size_t len)
 {
      char hex_byte[3];
@@ -727,7 +630,6 @@ bool hex2bin(unsigned char *p, const char *hexstr, size_t len)
 
      return (len == 0 && *hexstr == 0) ? true : false;
 }
-
 
 void Stratum::parse_notify(const Value &params)
 {
@@ -766,52 +668,6 @@ void Stratum::parse_notify(const Value &params)
 
     current_job->clean = clean;
     current_job->difficulty = difficulty;
-}
-
-
-/**
- * request new work, return is always NULL, 
- * because it handles response internally .
- *
- * The stratum response for this request should be: 
- *   "{ "id": <id of the request>, "result": 
- *      { "data": <block hex data to solve>,    
- *        "difficulty": <target difficulty> }, 
- *        "error": <null or errors string> }"
- */
-BlockHeader *Stratum::getwork() {
-  
-  stringstream ss;
-  ss << "{\"id\": " << n_msgs;
-  ss << ", \"method\": \"getwork\", \"params\": [] } \n";
-  /* not optimal password should be hashed */
-  // ss << "[ \"" << user << "\", \"" << password  << "\" ] }\n";
-
-  string request = ss.str();
-
-  bool error;
-  do {
-    error = false;
-
-    log_str("getwork: \"" + request + "\"", LOG_D);
-    size_t ret = send(tcp_socket, request.c_str(), request.length(), 0);
- 
-    if (ret != request.length()) {
- 
-      log_str("Requesting work failed", LOG_W);
-      pthread_mutex_lock(&io_mutex);
-      cout << get_time() << "Requesting work failed" << endl;
-      pthread_mutex_unlock(&io_mutex);
-      error = true;
-      reconnect();
-    }
-
-  } while (running && error);
-
-  pthread_mutex_lock(&shares_mutex);
-  n_msgs++;
-  pthread_mutex_unlock(&shares_mutex);
-  return NULL;
 }
 
 void Stratum::stop() {

@@ -64,28 +64,6 @@
 
 using namespace std;
 
-class BlockHeader {
-  public:
-    BlockHeader(std::string *data) {
-        _hex = *data;
-    }
-
-    std::string &get_hex() { return _hex; }
-    int target;
-    int shift;
-    int difficulty;
-  private:
-    std::string _hex;
-};
-
-class Miner {
-  public:
-    Miner() {}
-    virtual bool started() = 0;
-    virtual void update_header(BlockHeader *head) = 0;
-    virtual void start(BlockHeader *head) = 0;
-};
-
 struct Job {
   public:
     std::string job_id;
@@ -104,6 +82,8 @@ struct Job {
 
 using JobPtr = std::shared_ptr<Job>;
 
+class AbstractMiner;
+
 #define TWO_POW48 (((uint64_t) 1) << 48)
 
 class Stratum {
@@ -115,7 +95,7 @@ class Stratum {
                                  const char *user = NULL,
                                  const char *password = NULL,
                                  uint16_t shift = 0,
-                                 Miner *miner = NULL);
+                                 AbstractMiner *miner = NULL);
 
 
     /* stop this */
@@ -123,30 +103,7 @@ class Stratum {
 
     void send_authorize();
     void send_subscribe();
- 
-    /**
-     * sends a given BlockHeader to the server 
-     * with a stratum request, the response should
-     * tell if the share was accepted or not.
-     *
-     * The format should be:
-     *   "{ "id": <id of the share>, "result": <true/false>,
-     *      "error": <null or errors string> }"
-     */
-    bool sendwork(BlockHeader *header);
- 
-    /**
-     * request new work, return is always NULL, 
-     * because it handles response internally .
-     *
-     * The stratum response for this request should be: 
-     *   "{ "id": <id of the request>, "result": 
-     *      { "data": <block hex data to solve>,    
-     *        "difficulty": <target difficulty> }, 
-     *        "error": <null or errors string> }"
-     */
-    BlockHeader *getwork();
- 
+
     /**
      * Thread that listens for new messages from the server.
      * it updates miners, and prints share information
@@ -188,7 +145,7 @@ class Stratum {
             const char *user = NULL,
             const char *password = NULL,
             uint16_t shift = 0,
-            Miner *miner = NULL);
+            AbstractMiner *miner = NULL);
 
     ~Stratum();
 
@@ -197,11 +154,11 @@ class Stratum {
 
       public :
         Stratum *client;
-        Miner *miner;
+        AbstractMiner *miner;
         map<int, double> *shares;
         bool running;
 
-        ThreadArgs(Stratum *client, Miner *miner, map<int, double> *shares);
+        ThreadArgs(Stratum *client, AbstractMiner *miner, map<int, double> *shares);
     };
 
     /* synchronization mutexes */
@@ -212,12 +169,6 @@ class Stratum {
 
     /* helper function which processes an response share */
     void process_share(map<int, double> *shares, int id, bool accepted);
-
-    /**
-     * helper function to parse a json block work in the form of:
-     * "{ "data": <block data to solve>, "difficulty": <target difficulty> }"
-     */
-    void parse_block_work(Miner *miner, const rapidjson::Value &result);
 
     /**
      * (re)start an keep alive tcp connection
